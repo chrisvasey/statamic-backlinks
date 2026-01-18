@@ -1,0 +1,38 @@
+{
+    "name": "chrisvasey/statamic-backlinks",
+    "autoload": {
+        "psr-4": {
+            "Chrisvasey\\StatamicBacklinks\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Chrisvasey\\StatamicBacklinks\\Tests\\": "tests"
+        }
+    },
+    "require": {
+        "statamic/cms": "^6.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.2",
+        "phpunit/phpunit": "^10.5"
+    },
+    "config": {
+        "allow-plugins": {
+            "pixelfear/composer-dist-plugin": true
+        }
+    },
+    "extra": {
+        "statamic": {
+            "name": "Statamic Backlinks",
+            "description": "Statamic Backlinks addon"
+        },
+        "laravel": {
+            "providers": [
+                "Chrisvasey\\StatamicBacklinks\\ServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
