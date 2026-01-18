@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Statamic\Facades\Collection;
+use Statamic\Contracts\Entries\Entry as EntryContract;
 use Statamic\Facades\Entry;
 use Statamic\Support\Str;
 
@@ -20,14 +21,8 @@ class BacklinksController extends Controller
     /**
      * Get backlinks for a specific entry.
      */
-    public function show(string $entryId): JsonResponse
+    public function show(EntryContract $entry): JsonResponse
     {
-        $entry = Entry::find($entryId);
-
-        if (! $entry) {
-            return response()->json(['error' => 'Entry not found'], 404);
-        }
-
         $backlinks = $this->indexer->getBacklinksFor($entry);
 
         return response()->json([
