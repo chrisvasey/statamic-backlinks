@@ -1,6 +1,8 @@
 # Statamic Backlinks
 
-Obsidian-style backlinks for Statamic v6. Create wiki-links between entries, track which pages link to each other, and create new pages from missing links.
+Obsidian-style backlinks for Statamic's Bard and Markdown fields. Create wiki-links between entries, track which pages link to each other, and create new pages from missing links.
+
+Learn more about [Obsidian backlinks](https://help.obsidian.md/plugins/backlinks).
 
 ## Features
 

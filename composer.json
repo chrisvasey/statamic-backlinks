@@ -1,5 +1,15 @@
 {
     "name": "chrisvasey/statamic-backlinks",
+    "description": "Obsidian-style backlinks for Statamic's Bard and Markdown fields",
+    "license": "MIT",
+    "keywords": [
+        "statamic",
+        "backlinks",
+        "wiki-links",
+        "obsidian",
+        "bard",
+        "markdown"
+    ],
     "autoload": {
         "psr-4": {
             "Chrisvasey\\StatamicBacklinks\\": "src"
@@ -14,8 +24,8 @@
         "statamic/cms": "^6.0"
     },
     "require-dev": {
-        "orchestra/testbench": "^9.2",
-        "phpunit/phpunit": "^10.5"
+        "orchestra/testbench": "^10.0",
+        "phpunit/phpunit": "^11.0"
     },
     "config": {
         "allow-plugins": {
@@ -25,7 +35,7 @@
     "extra": {
         "statamic": {
             "name": "Statamic Backlinks",
-            "description": "Statamic Backlinks addon"
+            "description": "Obsidian-style backlinks with wiki-link syntax for Bard and Markdown fields"
         },
         "laravel": {
             "providers": [
@@ -33,6 +43,6 @@
             ]
         }
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "minimum-stability": "beta"
 }
