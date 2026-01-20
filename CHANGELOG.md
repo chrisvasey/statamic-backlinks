@@ -21,3 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `wiki_links` modifier for rendering wiki-links
 - `backlinks:rebuild` command for index rebuilding
 - Configurable collections, fields, and CSS classes
+
+[Unreleased]: https://github.com/chrisvasey/statamic-backlinks/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/chrisvasey/statamic-backlinks/releases/tag/v1.0.0
