@@ -12,6 +12,11 @@ Statamic.booting(() => {
             pushComponent('backlinks-sidebar', { props: {} });
         }
     });
+
+    Statamic.$hooks.on('entry.saved', (resolve, reject, { response }) => {
+        Statamic.$events.$emit('backlinks-entry-saved', response.data.data.reference);
+        resolve();
+    });
 });
 
 // Register the wiki-link autocomplete extension for Bard

@@ -63,13 +63,18 @@ async function flush() {
 }
 
 function mountSidebar(t, fetch) {
-    const originals = { fetch: globalThis.fetch, cp_url: globalThis.cp_url, MutationObserver: globalThis.MutationObserver, error: console.error };
+    const originals = { fetch: globalThis.fetch, cp_url: globalThis.cp_url, MutationObserver: globalThis.MutationObserver, Statamic: globalThis.Statamic, error: console.error };
     const reference = Vue.ref('entry::target');
     const observers = [];
     const errors = [];
+    const savedListeners = [];
 
     globalThis.fetch = fetch;
     globalThis.cp_url = path => `/custom-cp/${path}`;
+    globalThis.Statamic = { $events: {
+        $on: (name, callback) => { assert.equal(name, 'backlinks-entry-saved'); savedListeners.push(callback); },
+        $off: (name, callback) => { assert.equal(name, 'backlinks-entry-saved'); savedListeners.splice(savedListeners.indexOf(callback), 1); },
+    } };
     console.error = (...args) => errors.push(args);
     globalThis.MutationObserver = class {
         constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
@@ -91,10 +96,11 @@ function mountSidebar(t, fetch) {
         globalThis.fetch = originals.fetch;
         globalThis.cp_url = originals.cp_url;
         globalThis.MutationObserver = originals.MutationObserver;
+        globalThis.Statamic = originals.Statamic;
         console.error = originals.error;
     });
 
-    return { app, root, form: root.children[0], reference, observers, errors };
+    return { app, root, form: root.children[0], reference, observers, errors, savedListeners };
 }
 
 function response(backlinks = []) {
@@ -103,14 +109,17 @@ function response(backlinks = []) {
 
 test('addon mounts the registered sidebar for entry publish containers only', () => {
     const callbacks = new Map();
+    const hooks = new Map();
     const registered = new Map();
     const mounted = [];
+    const events = [];
     const component = {};
     const addon = readFileSync(new URL('../../resources/js/addon.js', import.meta.url), 'utf8').replace(/^import .+;\n/gm, '');
     new Function('Statamic', 'BacklinksSidebar', addon)({
         booting: callback => callback(),
         $components: { register: (name, value) => registered.set(name, value) },
-        $events: { $on: (name, callback) => callbacks.set(name, callback) },
+        $events: { $on: (name, callback) => callbacks.set(name, callback), $emit: (...args) => events.push(args) },
+        $hooks: { on: (name, callback) => hooks.set(name, callback) },
         $bard: { addExtension: () => {} },
     }, component);
 
@@ -120,6 +129,14 @@ test('addon mounts the registered sidebar for entry publish containers only', ()
         created({ reference: Vue.ref(reference), pushComponent: (...args) => mounted.push(args) });
     }
     assert.deepEqual(mounted, [['backlinks-sidebar', { props: {} }]]);
+
+    let resolved = false;
+    hooks.get('entry.saved')(() => { resolved = true; }, assert.fail, {
+        reference: 'entry::initial-localization',
+        response: { data: { data: { reference: 'entry::saved-localization' } } },
+    });
+    assert.deepEqual(events, [['backlinks-entry-saved', 'entry::saved-localization']]);
+    assert.equal(resolved, true);
 });
 
 test('sidebar follows its form sidebar and renders empty, linked, and error states', async t => {
@@ -190,4 +207,33 @@ test('entry changes cancel stale requests and unmount disconnects the observer',
 
     app.unmount();
     assert.equal(observers[0].disconnected, true);
+});
+
+test('saving the current entry refreshes backlinks and removes its listener on unmount', async t => {
+    const requests = [];
+    const responses = [response([{ id: 'source', title: 'Source Page', collection: 'pages', edit_url: '/source/edit' }]), response()];
+    const { app, root, savedListeners } = mountSidebar(t, async url => {
+        requests.push(url);
+        return responses.shift();
+    });
+    await flush();
+    assert.ok(root.querySelector('a'));
+    assert.equal(savedListeners.length, 1);
+
+    const saved = reference => savedListeners.forEach(callback => callback(reference));
+
+    saved('entry::other');
+    await flush();
+    assert.equal(requests.length, 1);
+
+    saved('entry::target');
+    await flush();
+    assert.deepEqual(requests, ['/custom-cp/backlinks/target', '/custom-cp/backlinks/target']);
+    assert.equal(root.querySelector('a'), null);
+    assert.match(root.textContent, /No pages link to this entry\./);
+
+    const unrelatedListener = () => {};
+    savedListeners.push(unrelatedListener);
+    app.unmount();
+    assert.deepEqual(savedListeners, [unrelatedListener]);
 });

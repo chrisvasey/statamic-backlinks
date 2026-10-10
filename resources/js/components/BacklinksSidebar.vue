@@ -12,8 +12,15 @@ const loading = ref(true);
 const backlinks = ref([]);
 const count = ref(0);
 const error = ref(null);
+const refreshVersion = ref(0);
 
-watch(entryId, async (id, previousId, onCleanup) => {
+const refreshAfterSave = (savedReference) => {
+    if (savedReference === reference.value) {
+        refreshVersion.value++;
+    }
+};
+
+watch([entryId, refreshVersion], async ([id], previousValues, onCleanup) => {
     const controller = new AbortController();
     onCleanup(() => controller.abort());
 
@@ -51,6 +58,7 @@ watch(entryId, async (id, previousId, onCleanup) => {
 }, { immediate: true });
 
 onMounted(() => {
+    Statamic.$events.$on('backlinks-entry-saved', refreshAfterSave);
     const form = anchor.value.parentElement;
     const updateSidebar = () => { sidebar.value = form.querySelector('aside'); };
 
@@ -60,7 +68,10 @@ onMounted(() => {
     updateSidebar();
 });
 
-onBeforeUnmount(() => observer?.disconnect());
+onBeforeUnmount(() => {
+    observer?.disconnect();
+    Statamic.$events.$off('backlinks-entry-saved', refreshAfterSave);
+});
 </script>
 
 <template>
