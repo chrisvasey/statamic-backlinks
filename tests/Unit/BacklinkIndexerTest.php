@@ -4,6 +4,8 @@ namespace Chrisvasey\StatamicBacklinks\Tests\Unit;
 
 use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
 use Chrisvasey\StatamicBacklinks\Tests\TestCase;
+use Statamic\Facades\Collection;
+use Statamic\Facades\Entry;
 
 class BacklinkIndexerTest extends TestCase
 {
@@ -13,7 +15,7 @@ class BacklinkIndexerTest extends TestCase
     {
         parent::setUp();
 
-        $this->indexer = new BacklinkIndexer();
+        $this->indexer = new BacklinkIndexer;
     }
 
     public function test_extracts_simple_wiki_links()
@@ -69,5 +71,40 @@ class BacklinkIndexerTest extends TestCase
         $links = $this->indexer->extractLinks($content);
 
         $this->assertCount(0, $links);
+    }
+
+    public function test_renaming_entry_replaces_its_title_mapping(): void
+    {
+        Collection::make('pages')->routes('/{slug}')->save();
+
+        $target = Entry::make()
+            ->collection('pages')
+            ->slug('target')
+            ->data(['title' => 'Original Page', 'content' => '[[Source Page]]']);
+        $target->save();
+
+        $source = Entry::make()
+            ->collection('pages')
+            ->slug('source')
+            ->data(['title' => 'Source Page', 'content' => '[[Original Page]]']);
+        $source->save();
+
+        $this->indexer->updateEntry($target);
+        $this->indexer->updateEntry($source);
+        $this->assertCount(1, $this->indexer->getBacklinksFor($target));
+
+        $target->set('title', 'Renamed Page')->save();
+        $this->indexer->updateEntry($target);
+
+        $this->assertNull($this->indexer->resolveTitle('Original Page'));
+        $this->assertSame($target->id(), $this->indexer->resolveTitle('Renamed Page')?->id());
+        $this->assertSame($source->id(), $this->indexer->resolveTitle('Source Page')?->id());
+        $this->assertCount(0, $this->indexer->getBacklinksFor($target));
+        $this->assertSame([$target->id()], $this->indexer->getBacklinksFor($source)->map->id()->all());
+
+        $source->set('content', '[[Renamed Page]]')->save();
+        $this->indexer->updateEntry($source);
+
+        $this->assertSame([$source->id()], $this->indexer->getBacklinksFor($target)->map->id()->all());
     }
 }

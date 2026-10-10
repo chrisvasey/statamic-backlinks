@@ -3,6 +3,9 @@
 namespace Chrisvasey\StatamicBacklinks\Modifiers;
 
 use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
+use Chrisvasey\StatamicBacklinks\WikiLinkParser;
+use DOMDocument;
+use DOMElement;
 use Statamic\Modifiers\Modifier;
 
 class WikiLinks extends Modifier
@@ -15,37 +18,15 @@ class WikiLinks extends Modifier
             return $value;
         }
 
-        $indexer = app(BacklinkIndexer::class);
+        return app(WikiLinkParser::class)->transform($value, function (DOMDocument $document, string $title, string $display): DOMElement {
+            $entry = app(BacklinkIndexer::class)->resolveTitle($title);
+            $url = $entry?->status() === 'published' ? $entry->url() : null;
+            $element = $document->createElement($url ? 'a' : 'span');
+            $element->setAttribute('class', $url ? config('backlinks.css.link', 'wiki-link') : config('backlinks.css.missing', 'wiki-link-missing'));
+            $element->setAttribute($url ? 'href' : 'data-title', $url ?: $title);
+            $element->appendChild($document->createTextNode($display));
 
-        $linkClass = config('backlinks.css.link', 'wiki-link');
-        $missingClass = config('backlinks.css.missing', 'wiki-link-missing');
-
-        // Match [[Page Title]] and [[Page Title|Display Text]]
-        $pattern = '/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/';
-
-        return preg_replace_callback($pattern, function ($matches) use ($indexer, $linkClass, $missingClass) {
-            $title = trim($matches[1]);
-            $display = isset($matches[2]) ? trim($matches[2]) : $title;
-
-            $entry = $indexer->resolveTitle($title);
-
-            if ($entry) {
-                $url = $entry->url();
-
-                return sprintf(
-                    '<a href="%s" class="%s">%s</a>',
-                    e($url),
-                    e($linkClass),
-                    e($display)
-                );
-            }
-
-            return sprintf(
-                '<span class="%s" data-title="%s">%s</span>',
-                e($missingClass),
-                e($title),
-                e($display)
-            );
-        }, $value);
+            return $element;
+        });
     }
 }

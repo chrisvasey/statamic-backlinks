@@ -6,8 +6,10 @@ use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Statamic\Facades\Collection;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Statamic\Contracts\Entries\Entry as EntryContract;
+use Statamic\Facades\Collection;
 use Statamic\Facades\Entry;
 use Statamic\Support\Str;
 
@@ -23,7 +25,10 @@ class BacklinksController extends Controller
      */
     public function show(EntryContract $entry): JsonResponse
     {
-        $backlinks = $this->indexer->getBacklinksFor($entry);
+        Gate::authorize('view', $entry);
+
+        $backlinks = $this->indexer->getBacklinksFor($entry)
+            ->filter(fn (EntryContract $backlink): bool => Gate::allows('view', $backlink));
 
         return response()->json([
             'count' => $backlinks->count(),
@@ -72,14 +77,18 @@ class BacklinksController extends Controller
                 'title' => $title,
             ]);
 
-        if (! config('backlinks.creation.default_published', false)) {
+        Gate::authorize('store', [EntryContract::class, $collection, $entry->site()]);
+
+        if (! config('backlinks.creation.default_published', false) || Gate::denies('publish', $entry)) {
             $entry->published(false);
         }
 
-        $entry->save();
+        if ($slug === '' || Entry::query()->where('collection', $collectionHandle)->where('slug', $slug)->exists()
+            || ($entry->uri() && Entry::findByUri($entry->uri(), $entry->locale()))) {
+            throw ValidationException::withMessages(['title' => 'A page already uses this URL. Choose a different title.']);
+        }
 
-        // Update the index with the new entry
-        $this->indexer->updateEntry($entry);
+        $entry->save();
 
         return response()->json([
             'success' => true,
@@ -98,9 +107,9 @@ class BacklinksController extends Controller
     public function search(Request $request): JsonResponse
     {
         $query = $request->get('q', '');
-        $limit = min((int) $request->get('limit', 10), 50);
+        $limit = max(1, min((int) $request->get('limit', 10), 50));
 
-        $collections = config('backlinks.scan_collections', ['*']);
+        $collections = config('backlinks.linkable_collections', ['*']);
 
         $entriesQuery = $collections === ['*']
             ? Entry::query()
@@ -110,10 +119,17 @@ class BacklinksController extends Controller
             $entriesQuery->where('title', 'like', "%{$query}%");
         }
 
+        if ($request->boolean('exact')) {
+            $entry = $this->indexer->resolveTitle(trim($query));
+            $entriesQuery = Entry::query()->where('id', $entry?->id() ?? '__missing__');
+        }
+
         $entries = $entriesQuery
             ->orderBy('title')
-            ->limit($limit)
             ->get()
+            ->filter(fn (EntryContract $entry): bool => Gate::allows('view', $entry))
+            ->take($limit)
+            ->values()
             ->map(function ($entry) {
                 return [
                     'id' => $entry->id(),
@@ -138,6 +154,8 @@ class BacklinksController extends Controller
         if ($strategy === 'same' && $sourceEntryId) {
             $sourceEntry = Entry::find($sourceEntryId);
             if ($sourceEntry) {
+                Gate::authorize('view', $sourceEntry);
+
                 return $sourceEntry->collection()->handle();
             }
         }

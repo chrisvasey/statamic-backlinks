@@ -18,7 +18,7 @@ class BacklinksTagTest extends TestCase
 
         $this->indexer = app(BacklinkIndexer::class);
 
-        Collection::make('pages')->save();
+        Collection::make('pages')->routes('/{slug}')->save();
     }
 
     public function test_backlinks_tag_returns_linking_entries()
@@ -46,7 +46,7 @@ class BacklinksTagTest extends TestCase
 
         // Parse the backlinks tag
         $template = '{{ backlinks from="'.$targetEntry->id().'" }}{{ title }}{{ /backlinks }}';
-        $result = (string) Antlers::parse($template);
+        $result = (string) Antlers::parse($template, [], true);
 
         $this->assertStringContainsString('Source Page', $result);
     }
@@ -85,7 +85,7 @@ class BacklinksTagTest extends TestCase
         $this->indexer->updateEntry($source2);
 
         $template = '{{ backlinks:count from="'.$targetEntry->id().'" }}';
-        $result = (string) Antlers::parse($template);
+        $result = (string) Antlers::parse($template, [], true);
 
         $this->assertEquals('2', trim($result));
     }
@@ -102,8 +102,54 @@ class BacklinksTagTest extends TestCase
 
         // Test that count returns 0 for entries with no backlinks
         $template = '{{ backlinks:count from="'.$entry->id().'" }}';
-        $result = (string) Antlers::parse($template);
+        $result = (string) Antlers::parse($template, [], true);
 
         $this->assertEquals('0', trim($result));
+
+        $template = '{{ backlinks from="'.$entry->id().'" }}<a href="{{ url }}">{{ title }}</a>{{ /backlinks }}';
+
+        $this->assertSame('', (string) Antlers::parse($template, [], true));
+    }
+
+    public function test_missing_target_does_not_render_a_link(): void
+    {
+        $template = '{{ backlinks from="missing-entry" }}<a href="{{ url }}">{{ title }}</a>{{ /backlinks }}';
+
+        $this->assertSame('', (string) Antlers::parse($template, ['url' => '/current', 'title' => 'Current'], true));
+    }
+
+    public function test_frontend_backlinks_and_count_exclude_entries_without_a_public_url(): void
+    {
+        $target = Entry::make()->collection('pages')->slug('target')->data(['title' => 'Target']);
+        $target->save();
+
+        $public = Entry::make()->collection('pages')->slug('public')->data(['title' => 'Public', 'content' => '[[Target]]']);
+        $public->save();
+
+        $draft = Entry::make()->collection('pages')->slug('draft')->published(false)->data(['title' => 'Draft', 'content' => '[[Target]]']);
+        $draft->save();
+
+        Collection::make('unrouted')->save();
+        $unrouted = Entry::make()->collection('unrouted')->slug('unrouted')->data(['title' => 'Unrouted', 'content' => '[[Target]]']);
+        $unrouted->save();
+
+        Collection::make('articles')->routes('/articles/{slug}')->dated(true)->futureDateBehavior('private')->save();
+        $scheduled = Entry::make()->collection('articles')->slug('scheduled')->date(now()->addDay())->data(['title' => 'Scheduled', 'content' => '[[Target]]']);
+        $scheduled->save();
+
+        foreach ([$target, $public, $draft, $unrouted, $scheduled] as $entry) {
+            $this->indexer->updateEntry($entry);
+        }
+
+        $template = '{{ backlinks from="'.$target->id().'" }}<a href="{{ url }}">{{ title }}</a>{{ /backlinks }}';
+        $countTemplate = '{{ backlinks:count from="'.$target->id().'" }}';
+
+        $this->assertSame('<a href="/public">Public</a>', (string) Antlers::parse($template, [], true));
+        $this->assertSame('1', (string) Antlers::parse($countTemplate, [], true));
+
+        $public->published(false)->save();
+
+        $this->assertSame('', (string) Antlers::parse($template, [], true));
+        $this->assertSame('0', (string) Antlers::parse($countTemplate, [], true));
     }
 }

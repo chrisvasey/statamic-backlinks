@@ -44,3 +44,17 @@ jobs:
 
       - name: Run tests
         run: ./vendor/bin/phpunit
+
+      - name: Setup Node
+        if: matrix.php == '8.3'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Test and build control panel assets
+        if: matrix.php == '8.3'
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build

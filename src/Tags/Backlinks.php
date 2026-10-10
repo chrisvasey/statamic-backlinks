@@ -3,6 +3,7 @@
 namespace Chrisvasey\StatamicBacklinks\Tags;
 
 use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
+use Illuminate\Support\Collection;
 use Statamic\Facades\Entry;
 use Statamic\Tags\Tags;
 
@@ -23,16 +24,10 @@ class Backlinks extends Tags
      */
     public function index(): array|string
     {
-        $entry = $this->getTargetEntry();
-
-        if (! $entry) {
-            return $this->parseNoResults();
-        }
-
-        $backlinks = $this->indexer->getBacklinksFor($entry);
+        $backlinks = $this->getPublicBacklinks();
 
         if ($backlinks->isEmpty()) {
-            return $this->parseNoResults();
+            return '';
         }
 
         return $this->parseLoop($backlinks->map(function ($entry) {
@@ -46,13 +41,23 @@ class Backlinks extends Tags
      */
     public function count(): int
     {
+        return $this->getPublicBacklinks()->count();
+    }
+
+    /**
+     * @return Collection<int, \Statamic\Entries\Entry>
+     */
+    protected function getPublicBacklinks(): Collection
+    {
         $entry = $this->getTargetEntry();
 
         if (! $entry) {
-            return 0;
+            return collect();
         }
 
-        return $this->indexer->getBacklinksFor($entry)->count();
+        return $this->indexer->getBacklinksFor($entry)->filter(
+            fn (\Statamic\Entries\Entry $entry): bool => $entry->status() === 'published' && $entry->url()
+        );
     }
 
     /**
