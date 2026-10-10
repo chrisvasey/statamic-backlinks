@@ -6,8 +6,9 @@ use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Statamic\Facades\Collection;
+use Illuminate\Support\Facades\Gate;
 use Statamic\Contracts\Entries\Entry as EntryContract;
+use Statamic\Facades\Collection;
 use Statamic\Facades\Entry;
 use Statamic\Support\Str;
 
@@ -23,7 +24,10 @@ class BacklinksController extends Controller
      */
     public function show(EntryContract $entry): JsonResponse
     {
-        $backlinks = $this->indexer->getBacklinksFor($entry);
+        Gate::authorize('view', $entry);
+
+        $backlinks = $this->indexer->getBacklinksFor($entry)
+            ->filter(fn (EntryContract $backlink): bool => Gate::allows('view', $backlink));
 
         return response()->json([
             'count' => $backlinks->count(),
@@ -72,7 +76,9 @@ class BacklinksController extends Controller
                 'title' => $title,
             ]);
 
-        if (! config('backlinks.creation.default_published', false)) {
+        Gate::authorize('store', [EntryContract::class, $collection, $entry->site()]);
+
+        if (! config('backlinks.creation.default_published', false) || Gate::denies('publish', $entry)) {
             $entry->published(false);
         }
 
@@ -112,8 +118,10 @@ class BacklinksController extends Controller
 
         $entries = $entriesQuery
             ->orderBy('title')
-            ->limit($limit)
             ->get()
+            ->filter(fn (EntryContract $entry): bool => Gate::allows('view', $entry))
+            ->take($limit)
+            ->values()
             ->map(function ($entry) {
                 return [
                     'id' => $entry->id(),
@@ -138,6 +146,8 @@ class BacklinksController extends Controller
         if ($strategy === 'same' && $sourceEntryId) {
             $sourceEntry = Entry::find($sourceEntryId);
             if ($sourceEntry) {
+                Gate::authorize('view', $sourceEntry);
+
                 return $sourceEntry->collection()->handle();
             }
         }

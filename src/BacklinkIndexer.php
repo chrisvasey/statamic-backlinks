@@ -58,6 +58,11 @@ class BacklinkIndexer
         }
 
         // Update the titles index
+        $this->index['titles'] = array_filter(
+            $this->index['titles'] ?? [],
+            fn ($id) => $id !== $entryId
+        );
+
         $title = $entry->get('title') ?? $entry->slug();
         $normalizedTitle = $this->normalizeTitle($title);
         $this->index['titles'][$normalizedTitle] = $entryId;
@@ -179,14 +184,14 @@ class BacklinkIndexer
         if (in_array('*', $fields)) {
             // Scan all fields
             foreach ($entry->data()->all() as $value) {
-                $content .= $this->extractTextFromValue($value) . ' ';
+                $content .= $this->extractTextFromValue($value).' ';
             }
         } else {
             // Scan specific fields
             foreach ($fields as $field) {
                 $value = $entry->get($field);
                 if ($value) {
-                    $content .= $this->extractTextFromValue($value) . ' ';
+                    $content .= $this->extractTextFromValue($value).' ';
                 }
             }
         }
@@ -220,11 +225,11 @@ class BacklinkIndexer
 
         foreach ($array as $key => $value) {
             if ($key === 'text' && is_string($value)) {
-                $text .= $value . ' ';
+                $text .= $value.' ';
             } elseif (is_array($value)) {
-                $text .= $this->extractTextFromArray($value) . ' ';
+                $text .= $this->extractTextFromArray($value).' ';
             } elseif (is_string($value)) {
-                $text .= $value . ' ';
+                $text .= $value.' ';
             }
         }
 

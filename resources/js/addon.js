@@ -4,12 +4,14 @@ import BacklinksSidebar from './components/BacklinksSidebar.vue';
 import WikiLinkDropdown from './components/WikiLinkDropdown.vue';
 import { createWikiLinkSuggestion } from './extensions/WikiLinkSuggestion.js';
 
-Statamic.$components.register('backlinks-sidebar', BacklinksSidebar);
+Statamic.booting(() => {
+    Statamic.$components.register('backlinks-sidebar', BacklinksSidebar);
 
-// Inject backlinks sidebar into entry publish forms
-Statamic.$hooks.on('entry.loaded', (resolve, reject, { entry }) => {
-    // The sidebar will be mounted by the component itself
-    resolve();
+    Statamic.$events.$on('publish-container-created', ({ reference, pushComponent }) => {
+        if (reference.value?.startsWith('entry::')) {
+            pushComponent('backlinks-sidebar', { props: {} });
+        }
+    });
 });
 
 // Register the wiki-link autocomplete extension for Bard

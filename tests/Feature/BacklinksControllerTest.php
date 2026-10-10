@@ -4,8 +4,10 @@ namespace Chrisvasey\StatamicBacklinks\Tests\Feature;
 
 use Chrisvasey\StatamicBacklinks\BacklinkIndexer;
 use Chrisvasey\StatamicBacklinks\Tests\TestCase;
+use Statamic\Contracts\Auth\User as UserContract;
 use Statamic\Facades\Collection;
 use Statamic\Facades\Entry;
+use Statamic\Facades\Role;
 use Statamic\Facades\User;
 
 class BacklinksControllerTest extends TestCase
@@ -27,6 +29,20 @@ class BacklinksControllerTest extends TestCase
         return User::make()
             ->email('test@example.com')
             ->makeSuper()
+            ->save();
+    }
+
+    /**
+     * @param  list<string>  $permissions
+     */
+    protected function makeEditor(array $permissions): UserContract
+    {
+        Role::path($this->fakeStacheDirectory.'/roles.yaml');
+        Role::make('editor')->permissions(['access cp', ...$permissions])->save();
+
+        return User::make()
+            ->email('editor@example.com')
+            ->assignRole('editor')
             ->save();
     }
 
@@ -140,6 +156,31 @@ class BacklinksControllerTest extends TestCase
         $this->assertEquals('pages', $result['collection']);
     }
 
+    public function test_search_filters_restricted_entries_before_applying_the_limit(): void
+    {
+        $editor = $this->makeEditor(['view pages entries']);
+
+        Entry::make()->collection('articles')->slug('hidden')->data(['title' => 'A hidden entry'])->save();
+        $allowed = Entry::make()->collection('pages')->slug('allowed')->data(['title' => 'B allowed entry']);
+        $allowed->save();
+
+        $response = $this->actingAs($editor)
+            ->getJson(cp_route('backlinks.search', ['q' => 'entry', 'limit' => 1]));
+
+        $response->assertOk()->assertJsonCount(1)->assertJsonPath('0.id', $allowed->id());
+    }
+
+    public function test_search_returns_no_entries_without_view_permission(): void
+    {
+        $editor = $this->makeEditor([]);
+        Entry::make()->collection('pages')->slug('hidden')->data(['title' => 'Hidden'])->save();
+
+        $this->actingAs($editor)
+            ->getJson(cp_route('backlinks.search'))
+            ->assertOk()
+            ->assertExactJson([]);
+    }
+
     // -------------------------------------------------------------------------
     // Create endpoint tests
     // -------------------------------------------------------------------------
@@ -237,6 +278,84 @@ class BacklinksControllerTest extends TestCase
         $entryId = $response->json('entry.id');
         $entry = Entry::find($entryId);
         $this->assertFalse($entry->published());
+    }
+
+    public function test_create_requires_permission_for_the_destination_collection(): void
+    {
+        $editor = $this->makeEditor(['view pages entries']);
+
+        $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), ['title' => 'Forbidden Page'])
+            ->assertForbidden();
+
+        $this->assertCount(0, Entry::all());
+    }
+
+    public function test_create_allows_an_editor_with_collection_permission(): void
+    {
+        $editor = $this->makeEditor(['view pages entries', 'create pages entries']);
+
+        $response = $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), ['title' => 'Allowed Page']);
+
+        $response->assertOk()->assertJsonPath('entry.title', 'Allowed Page');
+        $this->assertFalse(Entry::find($response->json('entry.id'))->published());
+    }
+
+    public function test_create_requires_view_permission_for_the_source_entry(): void
+    {
+        $editor = $this->makeEditor(['create articles entries']);
+        $source = Entry::make()->collection('articles')->slug('source')->data(['title' => 'Restricted Source']);
+        $source->save();
+
+        $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), [
+                'title' => 'Forbidden Page',
+                'source_entry_id' => $source->id(),
+            ])
+            ->assertForbidden();
+
+        $this->assertCount(1, Entry::all());
+    }
+
+    public function test_create_checks_permissions_for_the_source_collection(): void
+    {
+        $editor = $this->makeEditor(['view articles entries', 'create pages entries']);
+        $source = Entry::make()->collection('articles')->slug('source')->data(['title' => 'Visible Source']);
+        $source->save();
+
+        $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), [
+                'title' => 'Forbidden Article',
+                'source_entry_id' => $source->id(),
+            ])
+            ->assertForbidden();
+
+        $this->assertCount(1, Entry::all());
+    }
+
+    public function test_create_keeps_entries_as_drafts_without_publish_permission(): void
+    {
+        config(['backlinks.creation.default_published' => true]);
+        $editor = $this->makeEditor(['create pages entries']);
+
+        $response = $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), ['title' => 'Draft Page']);
+
+        $response->assertOk();
+        $this->assertFalse(Entry::find($response->json('entry.id'))->published());
+    }
+
+    public function test_create_honors_published_config_with_publish_permission(): void
+    {
+        config(['backlinks.creation.default_published' => true]);
+        $editor = $this->makeEditor(['create pages entries', 'publish pages entries']);
+
+        $response = $this->actingAs($editor)
+            ->postJson(cp_route('backlinks.create'), ['title' => 'Published Page']);
+
+        $response->assertOk();
+        $this->assertTrue(Entry::find($response->json('entry.id'))->published());
     }
 
     // -------------------------------------------------------------------------
@@ -343,5 +462,38 @@ class BacklinksControllerTest extends TestCase
                 '*' => ['id', 'title', 'url', 'edit_url', 'collection'],
             ],
         ]);
+    }
+
+    public function test_show_requires_view_permission_for_the_target_entry(): void
+    {
+        $editor = $this->makeEditor(['view pages entries']);
+        $target = Entry::make()->collection('articles')->slug('hidden')->data(['title' => 'Hidden']);
+        $target->save();
+
+        $this->actingAs($editor)
+            ->getJson(cp_route('backlinks.show', ['entry' => $target->id()]))
+            ->assertForbidden();
+    }
+
+    public function test_show_omits_restricted_backlinks_and_their_count(): void
+    {
+        $editor = $this->makeEditor(['view pages entries']);
+        $target = Entry::make()->collection('pages')->slug('target')->data(['title' => 'Target']);
+        $target->save();
+        $hidden = Entry::make()->collection('articles')->slug('hidden')->data(['title' => 'Hidden', 'content' => '[[Target]]']);
+        $hidden->save();
+        $allowed = Entry::make()->collection('pages')->slug('allowed')->data(['title' => 'Allowed', 'content' => '[[Target]]']);
+        $allowed->save();
+
+        foreach ([$target, $hidden, $allowed] as $entry) {
+            $this->indexer->updateEntry($entry);
+        }
+
+        $this->actingAs($editor)
+            ->getJson(cp_route('backlinks.show', ['entry' => $target->id()]))
+            ->assertOk()
+            ->assertJsonPath('count', 1)
+            ->assertJsonCount(1, 'backlinks')
+            ->assertJsonPath('backlinks.0.id', $allowed->id());
     }
 }
