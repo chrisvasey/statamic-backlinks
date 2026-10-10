@@ -28,10 +28,9 @@ class WikiLinks extends Modifier
             $display = isset($matches[2]) ? trim($matches[2]) : $title;
 
             $entry = $indexer->resolveTitle($title);
+            $url = $entry?->status() === 'published' ? $entry->url() : null;
 
-            if ($entry) {
-                $url = $entry->url();
-
+            if ($url) {
                 return sprintf(
                     '<a href="%s" class="%s">%s</a>',
                     e($url),
