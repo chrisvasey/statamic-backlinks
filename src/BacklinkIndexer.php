@@ -2,21 +2,22 @@
 
 namespace Chrisvasey\StatamicBacklinks;
 
+use Closure;
+use DOMDocument;
+use DOMText;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use Statamic\Entries\Entry;
 use Statamic\Facades\Entry as EntryFacade;
+use Statamic\Facades\Markdown;
+use Statamic\Fieldtypes\Bard;
+use Statamic\Fieldtypes\Bard\Augmentor;
 
 class BacklinkIndexer
 {
     protected array $index = [];
 
     protected bool $loaded = false;
-
-    public function __construct()
-    {
-        //
-    }
 
     /**
      * Extract wiki-links from content.
@@ -27,14 +28,11 @@ class BacklinkIndexer
     {
         $links = collect();
 
-        // Match [[Page Title]] and [[Page Title|Display Text]]
-        preg_match_all('/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/', $content, $matches, PREG_SET_ORDER);
-
-        foreach ($matches as $match) {
-            $title = trim($match[1]);
-            $display = isset($match[2]) ? trim($match[2]) : $title;
+        app(WikiLinkParser::class)->transform(Markdown::parse($content), function (DOMDocument $document, string $title, string $display) use ($links): DOMText {
             $links->put($title, $display);
-        }
+
+            return $document->createTextNode($display);
+        });
 
         return $links;
     }
@@ -44,30 +42,34 @@ class BacklinkIndexer
      */
     public function updateEntry(Entry $entry): void
     {
-        $this->loadIndex();
+        $this->mutate(function () use ($entry): void {
+            $this->indexEntry($entry);
+        });
+    }
 
+    protected function indexEntry(Entry $entry): void
+    {
         $entryId = $entry->id();
-        $content = $this->getEntryContent($entry);
-        $links = $this->extractLinks($content);
+        unset($this->index['links'][$entryId]);
+        $this->index['titles'] = array_filter($this->index['titles'] ?? [], fn ($id): bool => $id !== $entryId);
 
-        // Update the links index
-        if ($links->isNotEmpty()) {
-            $this->index['links'][$entryId] = $links->keys()->all();
-        } else {
-            unset($this->index['links'][$entryId]);
+        if ($this->collectionAllowed($entry, 'scan_collections')) {
+            $links = $this->extractLinks($this->getEntryContent($entry));
+            if ($links->isNotEmpty()) {
+                $this->index['links'][$entryId] = $links->keys()->all();
+            }
         }
+        if ($this->collectionAllowed($entry, 'linkable_collections')) {
+            $title = $this->normalizeTitle($entry->get('title') ?? $entry->slug());
+            $this->index['titles'][$title] = $entryId;
+        }
+    }
 
-        // Update the titles index
-        $this->index['titles'] = array_filter(
-            $this->index['titles'] ?? [],
-            fn ($id) => $id !== $entryId
-        );
+    protected function collectionAllowed(Entry $entry, string $setting): bool
+    {
+        $collections = config('backlinks.'.$setting, ['*']);
 
-        $title = $entry->get('title') ?? $entry->slug();
-        $normalizedTitle = $this->normalizeTitle($title);
-        $this->index['titles'][$normalizedTitle] = $entryId;
-
-        $this->saveIndex();
+        return in_array('*', $collections) || in_array($entry->collectionHandle(), $collections);
     }
 
     /**
@@ -75,18 +77,10 @@ class BacklinkIndexer
      */
     public function removeEntry(string $entryId): void
     {
-        $this->loadIndex();
-
-        // Remove from links index
-        unset($this->index['links'][$entryId]);
-
-        // Remove from titles index
-        $this->index['titles'] = array_filter(
-            $this->index['titles'] ?? [],
-            fn ($id) => $id !== $entryId
-        );
-
-        $this->saveIndex();
+        $this->mutate(function () use ($entryId): void {
+            unset($this->index['links'][$entryId]);
+            $this->index['titles'] = array_filter($this->index['titles'] ?? [], fn ($id): bool => $id !== $entryId);
+        });
     }
 
     /**
@@ -96,16 +90,13 @@ class BacklinkIndexer
     {
         $this->loadIndex();
 
-        $title = $entry->get('title') ?? $entry->slug();
-        $normalizedTitle = $this->normalizeTitle($title);
-
         $backlinks = collect();
 
         foreach ($this->index['links'] ?? [] as $sourceEntryId => $linkedTitles) {
             foreach ($linkedTitles as $linkedTitle) {
-                if ($this->normalizeTitle($linkedTitle) === $normalizedTitle) {
+                if ($this->resolveTitle($linkedTitle)?->id() === $entry->id()) {
                     $sourceEntry = EntryFacade::find($sourceEntryId);
-                    if ($sourceEntry) {
+                    if ($sourceEntry && $this->collectionAllowed($sourceEntry, 'scan_collections')) {
                         $backlinks->push($sourceEntry);
                     }
                     break;
@@ -121,29 +112,12 @@ class BacklinkIndexer
      */
     public function rebuild(): void
     {
-        $this->index = ['links' => [], 'titles' => []];
-
-        $collections = config('backlinks.scan_collections', ['*']);
-
-        $entries = $collections === ['*']
-            ? EntryFacade::all()
-            : EntryFacade::whereInCollection($collections)->get();
-
-        foreach ($entries as $entry) {
-            $entryId = $entry->id();
-            $content = $this->getEntryContent($entry);
-            $links = $this->extractLinks($content);
-
-            if ($links->isNotEmpty()) {
-                $this->index['links'][$entryId] = $links->keys()->all();
+        $this->mutate(function (): void {
+            $this->index = ['links' => [], 'titles' => []];
+            foreach (EntryFacade::all() as $entry) {
+                $this->indexEntry($entry);
             }
-
-            $title = $entry->get('title') ?? $entry->slug();
-            $normalizedTitle = $this->normalizeTitle($title);
-            $this->index['titles'][$normalizedTitle] = $entryId;
-        }
-
-        $this->saveIndex();
+        });
     }
 
     /**
@@ -160,7 +134,9 @@ class BacklinkIndexer
             return null;
         }
 
-        return EntryFacade::find($entryId);
+        $entry = EntryFacade::find($entryId);
+
+        return $entry && $this->collectionAllowed($entry, 'linkable_collections') ? $entry : null;
     }
 
     /**
@@ -170,7 +146,7 @@ class BacklinkIndexer
     {
         $this->loadIndex();
 
-        return isset($this->index['titles'][$this->normalizeTitle($title)]);
+        return $this->resolveTitle($title) !== null;
     }
 
     /**
@@ -184,14 +160,14 @@ class BacklinkIndexer
         if (in_array('*', $fields)) {
             // Scan all fields
             foreach ($entry->data()->all() as $value) {
-                $content .= $this->extractTextFromValue($value).' ';
+                $content .= $this->extractTextFromValue($value)."\n\n";
             }
         } else {
             // Scan specific fields
             foreach ($fields as $field) {
                 $value = $entry->get($field);
                 if ($value) {
-                    $content .= $this->extractTextFromValue($value).' ';
+                    $content .= $this->extractTextFromValue($value)."\n\n";
                 }
             }
         }
@@ -221,19 +197,14 @@ class BacklinkIndexer
      */
     protected function extractTextFromArray(array $array): string
     {
-        $text = '';
-
-        foreach ($array as $key => $value) {
-            if ($key === 'text' && is_string($value)) {
-                $text .= $value.' ';
-            } elseif (is_array($value)) {
-                $text .= $this->extractTextFromArray($value).' ';
-            } elseif (is_string($value)) {
-                $text .= $value.' ';
-            }
+        if (($array['type'] ?? null) === 'set') {
+            return $this->extractTextFromArray($array['attrs']['values'] ?? []);
+        }
+        if (isset($array['type']) && (is_array($array['content'] ?? null) || isset($array['attrs']))) {
+            return (new Augmentor(new Bard))->convertToHtml([$array])."\n\n";
         }
 
-        return $text;
+        return implode("\n\n", array_map(fn (mixed $value): string => $this->extractTextFromValue($value), $array));
     }
 
     /**
@@ -242,6 +213,37 @@ class BacklinkIndexer
     protected function normalizeTitle(string $title): string
     {
         return mb_strtolower(trim($title));
+    }
+
+    protected function mutate(Closure $callback): void
+    {
+        $write = function () use ($callback): void {
+            $this->loaded = false;
+            $this->loadIndex();
+            $callback();
+            $this->saveIndex();
+        };
+        if (config('backlinks.storage', 'file') !== 'file') {
+            cache()->lock('backlinks.index.lock', 60)->block(10, $write);
+
+            return;
+        }
+
+        $path = config('backlinks.storage_path', storage_path('statamic/backlinks.json'));
+        File::ensureDirectoryExists(dirname($path));
+        $lock = fopen($path.'.lock', 'c');
+        if ($lock === false) {
+            throw new \RuntimeException('Unable to open backlinks index lock.');
+        }
+        try {
+            if (! flock($lock, LOCK_EX)) {
+                throw new \RuntimeException('Unable to lock backlinks index.');
+            }
+            $write();
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
     }
 
     /**
@@ -285,7 +287,7 @@ class BacklinkIndexer
                 File::makeDirectory($directory, 0755, true);
             }
 
-            File::put($path, json_encode($this->index, JSON_PRETTY_PRINT));
+            File::replace($path, json_encode($this->index, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
         } else {
             cache()->forever('backlinks.index', $this->index);
         }
@@ -306,7 +308,8 @@ class BacklinkIndexer
      */
     public function clear(): void
     {
-        $this->index = ['links' => [], 'titles' => []];
-        $this->saveIndex();
+        $this->mutate(function (): void {
+            $this->index = ['links' => [], 'titles' => []];
+        });
     }
 }

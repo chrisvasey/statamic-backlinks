@@ -117,6 +117,7 @@ test('addon mounts the registered sidebar for entry publish containers only', ()
     const addon = readFileSync(new URL('../../resources/js/addon.js', import.meta.url), 'utf8').replace(/^import .+;\n/gm, '');
     new Function('Statamic', 'BacklinksSidebar', addon)({
         booting: callback => callback(),
+        configuring: () => {},
         $components: { register: (name, value) => registered.set(name, value) },
         $events: { $on: (name, callback) => callbacks.set(name, callback), $emit: (...args) => events.push(args) },
         $hooks: { on: (name, callback) => hooks.set(name, callback) },

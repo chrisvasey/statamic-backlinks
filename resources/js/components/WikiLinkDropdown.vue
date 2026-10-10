@@ -1,10 +1,11 @@
 <template>
-    <div class="wikilink-dropdown" v-if="items.length || query">
+    <div class="wikilink-dropdown">
         <button
             v-for="(item, index) in items"
             :key="item.id"
             class="wikilink-dropdown-item"
             :class="{ 'is-selected': index === selectedIndex }"
+            @mousedown.prevent
             @click="selectItem(index)"
             @mouseenter="selectedIndex = index"
         >
@@ -15,6 +16,7 @@
             v-if="showCreateOption"
             class="wikilink-dropdown-item wikilink-dropdown-create"
             :class="{ 'is-selected': selectedIndex === items.length }"
+            @mousedown.prevent
             @click="createNew"
             @mouseenter="selectedIndex = items.length"
         >
@@ -89,8 +91,6 @@ function selectItem(index) {
 }
 
 function createNew() {
-    // Insert the wiki-link with the typed query
-    // The actual page creation happens when rendering
     props.command({ title: props.query, id: null, isNew: true });
 }
 

@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use Statamic\Contracts\Entries\Entry as EntryContract;
 use Statamic\Facades\Collection;
 use Statamic\Facades\Entry;
@@ -82,10 +83,12 @@ class BacklinksController extends Controller
             $entry->published(false);
         }
 
-        $entry->save();
+        if ($slug === '' || Entry::query()->where('collection', $collectionHandle)->where('slug', $slug)->exists()
+            || ($entry->uri() && Entry::findByUri($entry->uri(), $entry->locale()))) {
+            throw ValidationException::withMessages(['title' => 'A page already uses this URL. Choose a different title.']);
+        }
 
-        // Update the index with the new entry
-        $this->indexer->updateEntry($entry);
+        $entry->save();
 
         return response()->json([
             'success' => true,
@@ -104,9 +107,9 @@ class BacklinksController extends Controller
     public function search(Request $request): JsonResponse
     {
         $query = $request->get('q', '');
-        $limit = min((int) $request->get('limit', 10), 50);
+        $limit = max(1, min((int) $request->get('limit', 10), 50));
 
-        $collections = config('backlinks.scan_collections', ['*']);
+        $collections = config('backlinks.linkable_collections', ['*']);
 
         $entriesQuery = $collections === ['*']
             ? Entry::query()
@@ -114,6 +117,11 @@ class BacklinksController extends Controller
 
         if ($query !== '') {
             $entriesQuery->where('title', 'like', "%{$query}%");
+        }
+
+        if ($request->boolean('exact')) {
+            $entry = $this->indexer->resolveTitle(trim($query));
+            $entriesQuery = Entry::query()->where('id', $entry?->id() ?? '__missing__');
         }
 
         $entries = $entriesQuery
